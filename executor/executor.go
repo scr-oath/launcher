@@ -118,8 +118,10 @@ func doRunCommand(guid, path string, emitter screwdriver.Emitter, f *os.File, fR
 func doRunTeardownCommand(cmd screwdriver.CommandDef, emitter screwdriver.Emitter, env []string, path, shellBin string, exportFile string) (int, error) {
 	shargs := []string{"-e", "-c"}
 	cmdStr := "export PATH=$PATH:/opt/sd && " +
-		"while ! [ -f  "+ exportFile + " ]; do sleep 1; done && " + // wait for the file to be available
-		". " + exportFile + " && " +
+		// wait for the file to be available
+	  // "START_TIME=$SECONDS && while ! [ -f " + exportFile + " ] && [ $(($SECONDS - $START_TIME)) -lt 10 ]; do echo waiting; done " +
+	  "while ! [ -f  "+ exportFile + " ]; do sleep 1; done && " + 
+		". " + exportFile + " ; " +
 		cmd.Cmd
 
 	shargs = append(shargs, cmdStr)
@@ -230,9 +232,7 @@ func Run(path string, env []string, emitter screwdriver.Emitter, build screwdriv
 
 	// Loops through each line
 	"while read -r line; do " +
-	"escapeQuote=`echo $line | sed 's/\"/\\\\\\\"/g'` && " +    //escape double quote
-	"newline=`echo $escapeQuote | sed 's/\\([A-Za-z_][A-Za-z0-9_]*\\)=\\(.*\\)/\\1=\"\\2\"/'` && " +    // add double quote around
-	"echo ${prefix}$newline; " +
+	"echo $line | sed 's/\"/\\\\\\\"/g' | sed 's/$/\\\\n/' | tr -d '\\n' | sed 's/..$//' | sed 's/\\([A-Za-z_][A-Za-z0-9_]*\\)=\\(.*\\)/\\1=\"\\2\"/' | sed 's/^/export /'; " +
 	"done < $file > $tmpfile; " +
 	"mv $tmpfile $newfile"
 
@@ -254,16 +254,13 @@ func Run(path string, env []string, emitter screwdriver.Emitter, build screwdriv
 	 //   EXITCODE=$?;
 	 //   prefix='export '; file=/tmp/env; tmpfile=/tmp/env_tmp; newfile=/tmp/env_export; env | grep -vi PS1 > $file &&
 	 //   while read -r line; do
-	 //   escapeQuote=`echo $line | sed 's/"/\\\"/g'` &&
-	 //   newline=`echo $escapeQuote | sed 's/\([A-Za-z_][A-Za-z0-9_]*\)=\(.*\)/\1="\2"/'` &&
-	 //   echo ${prefix}$newline;
+	 //   echo $line | sed 's/"/\\\"/g' | sed 's/$/\\n/' | tr -d '\n' | sed 's/..$//' | sed 's/\([A-Za-z_][A-Za-z0-9_]*\)=\(.*\)/\1="\2"/' | sed 's/^/export /'
 	 //   done < $file > $tmpfile;
 	 //   mv $tmpfile $newfile;
 	 //   echo $SD_STEP_ID $EXITCODE;
 	 // }  && trap finish EXIT;
 
 	shargs := strings.Join(setupCommands, " && ")
-
 	fmt.Print(shargs)
 
 	f.Write([]byte(shargs))

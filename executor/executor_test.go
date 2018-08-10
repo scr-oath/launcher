@@ -293,6 +293,7 @@ func TestTeardownEnv(t *testing.T) {
 		{Cmd: "export FOO=\"BAR with spaces\"", Name: "foo"},
 		{Cmd: "export SINGLE_QUOTE=\"my ' single quote\"", Name: "singlequote"},
 		{Cmd: "export DOUBLE_QUOTE=\"my \\\" double quote\"", Name: "doublequote"},
+		{Cmd: "export NEWLINE=\"this has \\n new line\"", Name: "newline"},
 		{Cmd: "doesnotexit", Name: "doesnotexit"},
 		{Cmd: "echo bye", Name: "teardown-bye"},
 		{Cmd: "if [ \"$FOO\" != 'BAR with spaces' ]; then exit 1; fi", Name: "teardown-foo"},
