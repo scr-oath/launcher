@@ -22,7 +22,7 @@ jobs:
             # Ensure we can compile
             - build: go build -a -o /dev/null
             # Test cross-compiling as well
-            - test-release: "curl -sL https://git.io/goreleaser | bash -s -- --snapshot"
+            - test-release: "curl -sL https://git.io/goreleaser | bash -s -- --snapshot --debug"
 
     publish:
         requires: [main]
