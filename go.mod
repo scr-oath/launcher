@@ -4,6 +4,7 @@ go 1.12
 
 require (
 	github.com/creack/pty v1.1.7
+	github.com/golang/mock v1.3.1
 	github.com/mattn/go-colorable v0.1.2 // indirect
 	github.com/mattn/go-isatty v0.0.9 // indirect
 	github.com/myesui/uuid v1.0.0 // indirect

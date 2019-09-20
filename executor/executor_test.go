@@ -12,100 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+	"github.com/screwdriver-cd/launcher/mock_screwdriver"
 	"github.com/screwdriver-cd/launcher/screwdriver"
 )
 
 const TestBuildTimeout = 60
 
 var stepFilePath = "/tmp/step.sh"
-
-type MockAPI struct {
-	updateStepStart func(buildID int, stepName string) error
-	updateStepStop  func(buildID int, stepName string, exitCode int) error
-}
-
-func (f MockAPI) BuildFromID(buildID int) (screwdriver.Build, error) {
-	return screwdriver.Build{}, nil
-}
-
-func (f MockAPI) EventFromID(eventID int) (screwdriver.Event, error) {
-	return screwdriver.Event{}, nil
-}
-
-func (f MockAPI) JobFromID(jobID int) (screwdriver.Job, error) {
-	return screwdriver.Job{}, nil
-}
-
-func (f MockAPI) PipelineFromID(pipelineID int) (screwdriver.Pipeline, error) {
-	return screwdriver.Pipeline{}, nil
-}
-
-func (f MockAPI) UpdateBuildStatus(status screwdriver.BuildStatus, meta map[string]interface{}, buildID int) error {
-	return nil
-}
-
-func (f MockAPI) SecretsForBuild(build screwdriver.Build) (screwdriver.Secrets, error) {
-	return nil, nil
-}
-
-func (f MockAPI) GetAPIURL() (string, error) {
-	return "http://foo.bar", nil
-}
-
-func (f MockAPI) GetCoverageInfo() (screwdriver.Coverage, error) {
-	return screwdriver.Coverage{}, nil
-}
-
-func (f MockAPI) UpdateStepStart(buildID int, stepName string) error {
-	if f.updateStepStart != nil {
-		return f.updateStepStart(buildID, stepName)
-	}
-	return nil
-}
-
-func (f MockAPI) UpdateStepStop(buildID int, stepName string, exitCode int) error {
-	if f.updateStepStop != nil {
-		return f.updateStepStop(buildID, stepName, exitCode)
-	}
-	return nil
-}
-
-func (f MockAPI) GetBuildToken(buildID int, buildTimeoutMinutes int) (string, error) {
-	return "foobar", nil
-}
-
-type MockEmitter struct {
-	startCmd func(screwdriver.CommandDef)
-	write    func([]byte) (int, error)
-	close    func() error
-	found    []byte
-}
-
-func (e *MockEmitter) Error() error {
-	return nil
-}
-
-func (e *MockEmitter) StartCmd(cmd screwdriver.CommandDef) {
-	if e.startCmd != nil {
-		e.startCmd(cmd)
-	}
-	return
-}
-
-func (e *MockEmitter) Write(b []byte) (int, error) {
-	if e.write != nil {
-		return e.write(b)
-	}
-	e.found = append(e.found, b...)
-	return len(b), nil
-}
-
-func (e *MockEmitter) Close() error {
-	if e.close != nil {
-		return e.close()
-	}
-	return nil
-}
 
 func TestHelperProcess(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
@@ -176,49 +90,47 @@ func TestUnmocked(t *testing.T) {
 	}
 
 	for index, test := range tests {
-		envFilepath := "/tmp/testUnmocked" + strconv.Itoa(index)
-		setupTestCase(t, envFilepath)
-		cmd := screwdriver.CommandDef{
-			Cmd:  test.command,
-			Name: "test",
-		}
-		testBuild := screwdriver.Build{
-			ID: 12345,
-			Commands: []screwdriver.CommandDef{
-				cmd,
-			},
-			Environment: []map[string]string{},
-		}
-		testAPI := screwdriver.API(MockAPI{
-			updateStepStart: func(buildID int, stepName string) error {
-				if buildID != testBuild.ID {
-					t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-				}
-				if stepName != "test" {
-					t.Errorf("wrong step name got %v, want %v", stepName, "test")
-				}
-				return nil
-			},
+		t.Run(test.command, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			envFilepath := "/tmp/testUnmocked" + strconv.Itoa(index)
+			setupTestCase(t, envFilepath)
+			cmd := screwdriver.CommandDef{
+				Cmd:  test.command,
+				Name: "test",
+			}
+			testBuild := screwdriver.Build{
+				ID: 12345,
+				Commands: []screwdriver.CommandDef{
+					cmd,
+				},
+				Environment: []map[string]string{},
+			}
+			testAPI := mock_screwdriver.NewMockAPI(ctrl)
+			testAPI.EXPECT().
+				UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("test"))
+			testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+
+			err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, test.shell, TestBuildTimeout, envFilepath, "")
+			commands := ReadCommand(stepFilePath)
+
+			if !reflect.DeepEqual(err, test.err) {
+				t.Fatalf("Unexpected error: (%v) - should be (%v)", err, test.err)
+			}
+
+			if test.shell == "" {
+				test.shell = "/bin/sh"
+			}
+
+			if !reflect.DeepEqual(commands[0], "#!"+test.shell+" -e") {
+				t.Errorf("Unexpected shell from Run(%#v): %v", test, commands[0])
+			}
+
+			if !reflect.DeepEqual(commands[1], test.command) {
+				t.Errorf("Unexpected command from Run(%#v): %v", test, commands[1])
+			}
 		})
-
-		err := Run("", nil, &MockEmitter{}, testBuild, testAPI, testBuild.ID, test.shell, TestBuildTimeout, envFilepath, "")
-		commands := ReadCommand(stepFilePath)
-
-		if !reflect.DeepEqual(err, test.err) {
-			t.Fatalf("Unexpected error: (%v) - should be (%v)", err, test.err)
-		}
-
-		if test.shell == "" {
-			test.shell = "/bin/sh"
-		}
-
-		if !reflect.DeepEqual(commands[0], "#!"+test.shell+" -e") {
-			t.Errorf("Unexpected shell from Run(%#v): %v", test, commands[0])
-		}
-
-		if !reflect.DeepEqual(commands[1], test.command) {
-			t.Errorf("Unexpected command from Run(%#v): %v", test, commands[1])
-		}
 	}
 }
 
@@ -239,48 +151,30 @@ func TestMulti(t *testing.T) {
 		Commands:    commands,
 		Environment: []map[string]string{},
 	}
-	runTeardown := false
-	runUserTeardown := false
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			if stepName == "test sleep 1" {
-				t.Errorf("step should never execute: %v", stepName)
-			}
-			if stepName == "teardown-echo" {
-				runUserTeardown = true
-			}
-			if stepName == "sd-teardown-artifacts" {
-				runTeardown = true
-			}
-			return nil
-		},
-		updateStepStop: func(buildID int, stepName string, code int) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			if stepName == "test sleep 1" {
-				t.Errorf("Should not update step that never run: %v", stepName)
-			}
-			if stepName == "teardown-echo" {
-				runUserTeardown = true
-			}
-			if stepName == "sd-teardown-artifacts" {
-				runTeardown = true
-			}
-			return nil
-		},
-	})
-	err := Run("", nil, &MockEmitter{}, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("test sleep 1")).
+		Times(0)
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("teardown-echo"))
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("sd-teardown-artifacts"))
+
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("test sleep 1"), gomock.Any()).
+		Times(0)
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("teardown-echo"), gomock.Any())
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("sd-teardown-artifacts"), gomock.Any())
+
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+
+	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	expectedErr := fmt.Errorf("Launching command exit with code: %v", 127)
-	if !runUserTeardown {
-		t.Errorf("step user teardown should run")
-	}
-	if !runTeardown {
-		t.Errorf("step teardown should run")
-	}
 	if !reflect.DeepEqual(err, expectedErr) {
 		t.Fatalf("Unexpected error: %v - should be %v", err, expectedErr)
 	}
@@ -316,46 +210,23 @@ func TestTeardownEnv(t *testing.T) {
 		Commands:    commands,
 		Environment: []map[string]string{},
 	}
-	runWrapUserTeardown := false
-	runUserTeardown := false
-	runSdTeardown := false
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			return nil
-		},
-		updateStepStop: func(buildID int, stepName string, code int) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			if stepName == "preteardown-foo" {
-				runWrapUserTeardown = true
-			}
-			if stepName == "teardown-singlequote" {
-				runUserTeardown = true
-			}
-			if stepName == "sd-teardown-doublequote" {
-				runSdTeardown = true
-			}
-			if code != 0 && stepName != "doesnotexit" { // all steps should pass except for this step
-				t.Errorf("step %v failed with exit code %v", stepName, code)
-			}
-			return nil
-		},
-	})
-	err := Run("", baseEnv, &MockEmitter{}, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Any())
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("preteardown-foo"), gomock.Eq(0))
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("teardown-singlequote"), gomock.Eq(0))
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("sd-teardown-doublequote"), gomock.Eq(0))
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("doesnotexit"), gomock.Not(gomock.Eq(0)))
+
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	err := Run("", baseEnv, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	expectedErr := fmt.Errorf("Launching command exit with code: %v", 127)
-	if !runWrapUserTeardown {
-		t.Errorf("step pre user teardown should run")
-	}
-	if !runUserTeardown {
-		t.Errorf("step user teardown should run")
-	}
-	if !runSdTeardown {
-		t.Errorf("step sd teardown should run")
-	}
 	if !reflect.DeepEqual(err, expectedErr) {
 		t.Fatalf("Unexpected error: %v - should be %v", err, expectedErr)
 	}
@@ -373,18 +244,38 @@ func TestTeardownfail(t *testing.T) {
 		Commands:    commands,
 		Environment: []map[string]string{},
 	}
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			return nil
-		},
-	})
-	err := Run("", nil, &MockEmitter{}, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Any()).
+		AnyTimes()
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+
+	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	expectedErr := ErrStatus{127}
 	if !reflect.DeepEqual(err, expectedErr) {
 		t.Fatalf("Unexpected error: %v - should be %v", err, expectedErr)
+	}
+}
+
+type funcMatcher struct {
+	matches     func(x interface{}) bool
+	description string
+}
+
+func (f *funcMatcher) Matches(x interface{}) bool {
+	return f.matches(x)
+}
+
+func (f *funcMatcher) String() string {
+	return f.description
+}
+
+func NewFuncMatcher(matches func(interface{}) bool, description string) *funcMatcher {
+	return &funcMatcher{
+		matches:     matches,
+		description: description,
 	}
 }
 
@@ -403,27 +294,28 @@ func TestTimeout(t *testing.T) {
 		Commands:    commands,
 		Environment: []map[string]string{},
 	}
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			return nil
-		},
-		updateStepStop: func(buildID int, stepName string, code int) error {
-			if stepName == "completed" {
-				t.Errorf("Should not update step that never run: %v", stepName)
-			}
-			return nil
-		},
-	})
-	emitter := MockEmitter{
-		startCmd: func(cmd screwdriver.CommandDef) {
-			if cmd.Cmd == "sleep 3" {
-				time.Sleep(10000)
-			}
-			return
-		},
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Any(), gomock.Any()).
+		AnyTimes()
+	testAPI.EXPECT().
+		UpdateStepStop(gomock.Any(), gomock.Eq("completed"), gomock.Any()).
+		Times(0)
+
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter.EXPECT().
+		StartCmd(NewFuncMatcher(func(i interface{}) bool {
+			return i.(screwdriver.CommandDef).Cmd == "sleep 3"
+		}, `cmd.Cmd is "sleep 3"`)).
+		Do(func() {
+			time.Sleep(10000)
+		})
+
 	testTimeout := 3
-	err := Run("", nil, &emitter, testBuild, testAPI, testBuild.ID, "/bin/sh", testTimeout, envFilepath, "")
+	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", testTimeout, envFilepath, "")
 	expectedErr := fmt.Errorf("Timeout of %vs seconds exceeded", testTimeout)
 	if !reflect.DeepEqual(err, expectedErr) {
 		t.Fatalf("Unexpected error: %v - should be %v", err, expectedErr)
@@ -459,23 +351,25 @@ func TestEnv(t *testing.T) {
 		Commands: cmds,
 	}
 
-	output := MockEmitter{}
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			if stepName != "test" {
-				t.Errorf("wrong step name got %v, want %v", stepName, "test")
-			}
-			return nil
-		},
-	})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("test"))
+
+	var emitterWritten bytes.Buffer
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter.EXPECT().
+		Write(gomock.Any()).
+		Do(emitterWritten.Write).
+		AnyTimes()
+
 	wantFlattened := []string{}
 	for k, v := range want {
 		wantFlattened = append(wantFlattened, strings.Join([]string{k, v}, "="))
 	}
-	err := Run("", baseEnv, &output, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
+	err := Run("", baseEnv, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -483,7 +377,8 @@ func TestEnv(t *testing.T) {
 	found := map[string]string{}
 	var foundCmd string
 
-	scanner := bufio.NewScanner(bytes.NewReader(output.found))
+	emitterWritten.Reset()
+	scanner := bufio.NewScanner(&emitterWritten)
 	for scanner.Scan() {
 		line := scanner.Text()
 		split := strings.Split(line, "=")
@@ -523,45 +418,29 @@ func TestEmitter(t *testing.T) {
 		ID:       9999,
 		Commands: []screwdriver.CommandDef{},
 	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+	testAPI.EXPECT().
+		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("name2"))
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+
 	for _, test := range tests {
 		testBuild.Commands = append(testBuild.Commands, screwdriver.CommandDef{
 			Name: test.name,
 			Cmd:  test.command,
 		})
+		testEmitter.EXPECT().
+			StartCmd(NewFuncMatcher(func(i interface{}) bool {
+				return i.(screwdriver.CommandDef).Name == test.name
+			}, fmt.Sprintf("cmd.Name == %#v", test.name)))
 	}
 
-	var found []string
-	emitter := MockEmitter{
-		startCmd: func(cmd screwdriver.CommandDef) {
-			found = append(found, cmd.Name)
-		},
-	}
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			if buildID != testBuild.ID {
-				t.Errorf("wrong build id got %v, want %v", buildID, testBuild.ID)
-			}
-			if (stepName != "name1") && (stepName != "name2") {
-				t.Errorf("wrong step name got %v", stepName)
-			}
-			return nil
-		},
-	})
-
-	err := Run("", nil, &emitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
+	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
-	}
-
-	if len(found) != len(tests) {
-		t.Fatalf("Unexpected startCmds called. Want %v. Got %v", len(tests), len(found))
-	}
-
-	for i, test := range tests {
-		if found[i] != test.name {
-			t.Errorf("Unexpected order. Want %v. Got %v", found[i], test.name)
-		}
 	}
 }
 
@@ -583,15 +462,12 @@ func TestUserShell(t *testing.T) {
 		Commands:    commands,
 		Environment: env,
 	}
-	testAPI := screwdriver.API(MockAPI{
-		updateStepStart: func(buildID int, stepName string) error {
-			return nil
-		},
-		updateStepStop: func(buildID int, stepName string, code int) error {
-			return nil
-		},
-	})
-	err := Run("", nil, &MockEmitter{}, testBuild, testAPI, testBuild.ID, "/bin/bash", TestBuildTimeout, envFilepath, "")
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	testAPI := mock_screwdriver.NewMockAPI(ctrl)
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/bash", TestBuildTimeout, envFilepath, "")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}

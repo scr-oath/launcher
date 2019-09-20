@@ -1,5 +1,7 @@
 package screwdriver
 
+//go:generate mockgen -source=emitter.go -destination=../mock_screwdriver/mock-emitter.go
+
 import (
 	"bufio"
 	"encoding/json"

@@ -1,5 +1,7 @@
 package screwdriver
 
+//go:generate mockgen -source=screwdriver.go -destination=../mock_screwdriver/mock-screwdriver.go
+
 import (
 	"bytes"
 	"encoding/json"
