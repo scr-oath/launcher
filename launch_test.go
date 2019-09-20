@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang/mock/gomock"
 	"github.com/screwdriver-cd/launcher/executor"
+	"github.com/screwdriver-cd/launcher/mock_screwdriver"
 	"github.com/screwdriver-cd/launcher/screwdriver"
 )
 
@@ -55,179 +57,48 @@ type FakeJob screwdriver.Job
 type FakePipeline screwdriver.Pipeline
 type FakeScmRepo screwdriver.ScmRepo
 
-func mockAPI(t *testing.T, testBuildID, testJobID, testPipelineID int, testStatus screwdriver.BuildStatus) MockAPI {
-	return MockAPI{
-		buildFromID: func(buildID int) (screwdriver.Build, error) {
+func mockAPI(t *testing.T, ctrl *gomock.Controller, testBuildID, testJobID, testPipelineID int, testStatus screwdriver.BuildStatus) *mock_screwdriver.MockAPI {
+	api := mock_screwdriver.NewMockAPI(ctrl)
+	api.EXPECT().
+		BuildFromID(gomock.Eq(testBuildID)).
+		DoAndReturn(func(buildID int) (screwdriver.Build, error) {
 			return screwdriver.Build(FakeBuild{ID: testBuildID, EventID: TestEventID, JobID: testJobID, SHA: TestSHA, ParentBuildID: float64(1234)}), nil
-		},
-		eventFromID: func(eventID int) (screwdriver.Event, error) {
+		})
+	api.EXPECT().
+		EventFromID(gomock.Any()).
+		DoAndReturn(func(eventID int) (screwdriver.Event, error) {
 			return screwdriver.Event(FakeEvent{ID: TestEventID, ParentEventID: TestParentEventID}), nil
-		},
-		jobFromID: func(jobID int) (screwdriver.Job, error) {
-			if jobID != testJobID {
-				t.Errorf("jobID == %d, want %d", jobID, testJobID)
-				// Panic to get the stacktrace
-				panic(true)
-			}
+		}).
+		AnyTimes()
+	api.EXPECT().
+		JobFromID(gomock.Eq(testJobID)).
+		DoAndReturn(func(jobID int) (screwdriver.Job, error) {
 			return screwdriver.Job(FakeJob{ID: testJobID, PipelineID: testPipelineID, Name: "main"}), nil
-		},
-		pipelineFromID: func(pipelineID int) (screwdriver.Pipeline, error) {
-			if pipelineID != testPipelineID {
-				t.Errorf("pipelineID == %d, want %d", pipelineID, testPipelineID)
-				// Panic to get the stacktrace
-				panic(true)
-			}
+		}).
+		AnyTimes()
+	api.EXPECT().
+		PipelineFromID(gomock.Eq(testPipelineID)).
+		DoAndReturn(func(pipelineID int) (screwdriver.Pipeline, error) {
 			return screwdriver.Pipeline(FakePipeline{ScmURI: TestScmURI, ScmRepo: TestScmRepo}), nil
-		},
-		updateBuildStatus: func(status screwdriver.BuildStatus, meta map[string]interface{}, buildID int) error {
-			if buildID != testBuildID {
-				t.Errorf("status == %s, want %s", status, testStatus)
-				// Panic to get the stacktrace
-				panic(true)
-			}
-			if status != testStatus {
-				t.Errorf("status == %s, want %s", status, testStatus)
-				// Panic to get the stacktrace
-				panic(true)
-			}
-			return nil
-		},
-		getAPIURL: func() (string, error) {
-			return "https://api.screwdriver.cd/v4/", nil
-		},
-		getCoverageInfo: func() (screwdriver.Coverage, error) {
-			return screwdriver.Coverage(FakeCoverage{EnvVars: TestEnvVars}), nil
-		},
-		getBuildToken: func(buildID int, buildTimeoutMinutes int) (string, error) {
-			if buildID != testBuildID {
-				t.Errorf("buildID == %d, want %d", buildID, testBuildID)
-				// Panic to get the stacktrace
-				panic(true)
-			}
-			if buildTimeoutMinutes != TestBuildTimeout {
-				t.Errorf("buildTimeout == %d, want %d", buildTimeoutMinutes, TestBuildTimeout)
-				// Panic to get the stacktrace
-				panic(true)
-			}
-			return "foobar", nil
-		},
-	}
-}
+		}).
+		AnyTimes()
+	api.EXPECT().
+		UpdateBuildStatus(gomock.Eq(testStatus), gomock.Any(), gomock.Eq(testBuildID)).
+		AnyTimes()
+	api.EXPECT().
+		GetAPIURL().
+		Return("https://api.screwdriver.cd/v4/", nil).
+		AnyTimes()
+	api.EXPECT().
+		GetCoverageInfo().
+		Return(screwdriver.Coverage(FakeCoverage{EnvVars: TestEnvVars}), nil).
+		AnyTimes()
+	api.EXPECT().
+		GetBuildToken(gomock.Eq(testBuildID), gomock.Eq(TestBuildTimeout)).
+		Return("foobar", nil).
+		AnyTimes()
 
-type MockAPI struct {
-	buildFromID       func(int) (screwdriver.Build, error)
-	eventFromID       func(int) (screwdriver.Event, error)
-	jobFromID         func(int) (screwdriver.Job, error)
-	pipelineFromID    func(int) (screwdriver.Pipeline, error)
-	updateBuildStatus func(screwdriver.BuildStatus, map[string]interface{}, int) error
-	updateStepStart   func(buildID int, stepName string) error
-	updateStepStop    func(buildID int, stepName string, exitCode int) error
-	secretsForBuild   func(build screwdriver.Build) (screwdriver.Secrets, error)
-	getAPIURL         func() (string, error)
-	getCoverageInfo   func() (screwdriver.Coverage, error)
-	getBuildToken     func(buildID int, buildTimeoutMinutes int) (string, error)
-}
-
-func (f MockAPI) GetAPIURL() (string, error) {
-	return f.getAPIURL()
-}
-
-func (f MockAPI) GetCoverageInfo() (screwdriver.Coverage, error) {
-	return f.getCoverageInfo()
-}
-
-func (f MockAPI) SecretsForBuild(build screwdriver.Build) (screwdriver.Secrets, error) {
-	if f.secretsForBuild != nil {
-		return f.secretsForBuild(build)
-	}
-	return nil, nil
-}
-
-func (f MockAPI) BuildFromID(buildID int) (screwdriver.Build, error) {
-	if f.buildFromID != nil {
-		return f.buildFromID(buildID)
-	}
-	return screwdriver.Build(FakeBuild{}), nil
-}
-
-func (f MockAPI) EventFromID(eventID int) (screwdriver.Event, error) {
-	if f.eventFromID != nil {
-		return f.eventFromID(eventID)
-	}
-	return screwdriver.Event(FakeEvent{}), nil
-}
-
-func (f MockAPI) JobFromID(jobID int) (screwdriver.Job, error) {
-	if f.jobFromID != nil {
-		return f.jobFromID(jobID)
-	}
-	return screwdriver.Job(FakeJob{}), nil
-}
-
-func (f MockAPI) PipelineFromID(pipelineID int) (screwdriver.Pipeline, error) {
-	if f.pipelineFromID != nil {
-		return f.pipelineFromID(pipelineID)
-	}
-	return screwdriver.Pipeline(FakePipeline{}), nil
-}
-
-func (f MockAPI) UpdateBuildStatus(status screwdriver.BuildStatus, meta map[string]interface{}, buildID int) error {
-	if f.updateBuildStatus != nil {
-		return f.updateBuildStatus(status, nil, buildID)
-	}
-	return nil
-}
-
-func (f MockAPI) UpdateStepStart(buildID int, stepName string) error {
-	if f.updateStepStart != nil {
-		return f.updateStepStart(buildID, stepName)
-	}
-	return nil
-}
-
-func (f MockAPI) UpdateStepStop(buildID int, stepName string, exitCode int) error {
-	if f.updateStepStop != nil {
-		return f.updateStepStop(buildID, stepName, exitCode)
-	}
-	return nil
-}
-
-func (f MockAPI) GetBuildToken(buildID int, buildTimeoutMinutes int) (string, error) {
-	if f.getBuildToken != nil {
-		return f.getBuildToken(buildID, buildTimeoutMinutes)
-	}
-	return "foobar", nil
-}
-
-type MockEmitter struct {
-	startCmd func(screwdriver.CommandDef)
-	write    func([]byte) (int, error)
-	close    func() error
-}
-
-func (e *MockEmitter) Error() error {
-	return nil
-}
-
-func (e *MockEmitter) StartCmd(cmd screwdriver.CommandDef) {
-	if e.startCmd != nil {
-		e.startCmd(cmd)
-	}
-	return
-}
-
-func (e *MockEmitter) Write(b []byte) (int, error) {
-	if e.write != nil {
-		return e.write(b)
-	}
-	return len(b), nil
-}
-
-func (e *MockEmitter) Close() error {
-	if e.close != nil {
-		return e.close()
-	}
-	return nil
+	return api
 }
 
 func setupTempDirectoryAndSocket(t *testing.T) (dir string, cleanup func()) {
@@ -241,7 +112,7 @@ func setupTempDirectoryAndSocket(t *testing.T) (dir string, cleanup func()) {
 		t.Fatalf("Error creating test socket: %v", err)
 	}
 	return tmp, func() {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 	}
 }
 
@@ -262,22 +133,32 @@ func TestMain(m *testing.M) {
 }
 
 func TestBuildJobPipelineFromID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	testPipelineID := 9999
-	api := mockAPI(t, TestBuildID, TestJobID, testPipelineID, "RUNNING")
-	launch(screwdriver.API(api), TestBuildID, TestWorkspace, TestEmitter, TestMetaSpace, TestStoreURL, TestUiURL, TestShellBin, TestBuildTimeout, TestBuildToken)
+	api := mockAPI(t, ctrl, TestBuildID, TestJobID, testPipelineID, "RUNNING")
+	err := launch(screwdriver.API(api), TestBuildID, TestWorkspace, TestEmitter, TestMetaSpace, TestStoreURL, TestUiURL, TestShellBin, TestBuildTimeout, TestBuildToken)
+	if err != nil {
+		t.Error(err)
+	}
 }
 
 func TestBuildFromIdError(t *testing.T) {
-	api := MockAPI{
-		buildFromID: func(buildID int) (screwdriver.Build, error) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	api := mock_screwdriver.NewMockAPI(ctrl)
+	api.EXPECT().
+		BuildFromID(gomock.Any()).
+		DoAndReturn(func(buildID int) (screwdriver.Build, error) {
 			err := fmt.Errorf("testing error returns")
 			return screwdriver.Build(FakeBuild{}), err
-		},
-	}
+		})
 
 	err := launch(screwdriver.API(api), 0, TestWorkspace, TestEmitter, TestMetaSpace, TestStoreURL, TestUiURL, TestShellBin, TestBuildTimeout, TestBuildToken)
 	if err == nil {
-		t.Errorf("err should not be nil")
+		t.Error("err should not be nil")
 	}
 
 	expected := `Fetching Build ID 0`
@@ -287,16 +168,21 @@ func TestBuildFromIdError(t *testing.T) {
 }
 
 func TestEventFromIdError(t *testing.T) {
-	api := MockAPI{
-		eventFromID: func(eventID int) (screwdriver.Event, error) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	api := mock_screwdriver.NewMockAPI(ctrl)
+	api.EXPECT().
+		EventFromID(gomock.Any()).
+		DoAndReturn(func(eventID int) (screwdriver.Event, error) {
 			err := fmt.Errorf("testing error returns")
 			return screwdriver.Event(FakeEvent{}), err
-		},
-	}
+		}).
+		AnyTimes()
 
 	err := launch(screwdriver.API(api), 0, TestWorkspace, TestEmitter, TestMetaSpace, TestStoreURL, TestUiURL, TestShellBin, TestBuildTimeout, TestBuildToken)
 	if err == nil {
-		t.Errorf("err should not be nil")
+		t.Fatal("err should not be nil")
 	}
 
 	expected := `Fetching Event ID 0`
@@ -306,7 +192,10 @@ func TestEventFromIdError(t *testing.T) {
 }
 
 func TestJobFromIdError(t *testing.T) {
-	api := mockAPI(t, TestBuildID, TestJobID, 0, "RUNNING")
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	api := mockAPI(t, ctrl, TestBuildID, TestJobID, 0, "RUNNING")
 	api.jobFromID = func(jobID int) (screwdriver.Job, error) {
 		err := fmt.Errorf("testing error returns")
 		return screwdriver.Job(FakeJob{}), err
