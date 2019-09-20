@@ -1,9 +1,9 @@
-{"t":1569003495018,"m":"Screwdriver Launcher information","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Version:        vdev","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Pipeline:       #3","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Job:            main","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Build:          #1","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Workspace Dir:  /var/folders/b4/dyn_xf350vxbfxpj0j61mtjw0000gn/T/ArtifactDir398283019","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Checkout Dir:     /var/folders/b4/dyn_xf350vxbfxpj0j61mtjw0000gn/T/ArtifactDir398283019/src/github.com/screwdriver-cd/launcher","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Source Dir:     /var/folders/b4/dyn_xf350vxbfxpj0j61mtjw0000gn/T/ArtifactDir398283019/src/github.com/screwdriver-cd/launcher","s":"sd-setup-launcher"}
-{"t":1569003495018,"m":"Artifacts Dir:  /var/folders/b4/dyn_xf350vxbfxpj0j61mtjw0000gn/T/ArtifactDir398283019/artifacts","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Screwdriver Launcher information","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Version:        vdev","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Pipeline:       #3","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Job:            main","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Build:          #1","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Workspace Dir:  /var/folders/1d/cbhf8kbn5j1fjvjblbx03vhc0000gn/T/ArtifactDir248813989","s":"sd-setup-launcher"}
+{"t":1551828841797,"m":"Source Dir:     /var/folders/1d/cbhf8kbn5j1fjvjblbx03vhc0000gn/T/ArtifactDir248813989/src/github.com/screwdriver-cd/launcher","s":"sd-setup-launcher"}
+{"t":1551828841798,"m":"Artifacts Dir:  /var/folders/1d/cbhf8kbn5j1fjvjblbx03vhc0000gn/T/ArtifactDir248813989/artifacts","s":"sd-setup-launcher"}
+8209834,"m":"\u001b[90mArtifacts Dir:  \u001b[0m/var/folders/1d/cbhf8kbn5j1fjvjblbx03vhc0000gn/T/ArtifactDir859542109/artifacts","s":"sd-setup-launcher"}
