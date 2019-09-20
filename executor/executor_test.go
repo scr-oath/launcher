@@ -21,6 +21,20 @@ const TestBuildTimeout = 60
 
 var stepFilePath = "/tmp/step.sh"
 
+func NewDonothingEmitter(ctrl *gomock.Controller) *mock_screwdriver.MockEmitter {
+	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter.EXPECT().
+		StartCmd(gomock.Any()).
+		AnyTimes()
+	testEmitter.EXPECT().
+		Write(gomock.Any()).
+		AnyTimes()
+	testEmitter.EXPECT().
+		Close().
+		AnyTimes()
+	return testEmitter
+}
+
 func TestHelperProcess(*testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -110,7 +124,10 @@ func TestUnmocked(t *testing.T) {
 			testAPI := mock_screwdriver.NewMockAPI(ctrl)
 			testAPI.EXPECT().
 				UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("test"))
-			testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+			testAPI.EXPECT().
+				UpdateStepStop(gomock.Any(), gomock.Eq("test"), gomock.Any()).
+				AnyTimes()
+			testEmitter := NewDonothingEmitter(ctrl)
 
 			err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, test.shell, TestBuildTimeout, envFilepath, "")
 			commands := ReadCommand(stepFilePath)
@@ -137,14 +154,22 @@ func TestUnmocked(t *testing.T) {
 func TestMulti(t *testing.T) {
 	envFilepath := "/tmp/testMulti"
 	setupTestCase(t, envFilepath)
-	commands := []screwdriver.CommandDef{
-		{Cmd: "ls", Name: "test ls"},
-		{Cmd: "export FOO=BAR", Name: "test export env"},
-		{Cmd: `if [ -z "$FOO" ] ; then exit 1; fi`, Name: "test if env set"},
-		{Cmd: "doesnotexit", Name: "test doesnotexit err"},
-		{Cmd: "echo user teardown step", Name: "teardown-echo"},
-		{Cmd: "sleep 1", Name: "test sleep 1"},
-		{Cmd: "echo upload artifacts", Name: "sd-teardown-artifacts"},
+	tests := []struct {
+		cmd                 screwdriver.CommandDef
+		expectStopErrorCode bool
+	}{
+		{screwdriver.CommandDef{Cmd: "ls", Name: "test ls"}, false},
+		{screwdriver.CommandDef{Cmd: "export FOO=BAR", Name: "test export env"}, false},
+		{screwdriver.CommandDef{Cmd: `if [ -z "$FOO" ] ; then exit 1; fi`, Name: "test if env set"}, false},
+		{screwdriver.CommandDef{Cmd: "doesnotexit", Name: "test doesnotexit err"}, true},
+		{screwdriver.CommandDef{Cmd: "echo user teardown step", Name: "teardown-echo"}, false},
+		{screwdriver.CommandDef{Cmd: "sleep 1", Name: "test sleep 1"}, true},
+		{screwdriver.CommandDef{Cmd: "echo upload artifacts", Name: "sd-teardown-artifacts"}, false},
+	}
+
+	var commands []screwdriver.CommandDef
+	for _, tt := range tests {
+		commands = append(commands, tt.cmd)
 	}
 	testBuild := screwdriver.Build{
 		ID:          12345,
@@ -155,23 +180,17 @@ func TestMulti(t *testing.T) {
 	defer ctrl.Finish()
 
 	testAPI := mock_screwdriver.NewMockAPI(ctrl)
-	testAPI.EXPECT().
-		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("test sleep 1")).
-		Times(0)
-	testAPI.EXPECT().
-		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("teardown-echo"))
-	testAPI.EXPECT().
-		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("sd-teardown-artifacts"))
-
-	testAPI.EXPECT().
-		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("test sleep 1"), gomock.Any()).
-		Times(0)
-	testAPI.EXPECT().
-		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("teardown-echo"), gomock.Any())
-	testAPI.EXPECT().
-		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("sd-teardown-artifacts"), gomock.Any())
-
-	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	for _, tt := range tests {
+		testAPI.EXPECT().
+			UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq(tt.cmd.Name))
+		errorCodeMatcher := gomock.Eq(0)
+		if tt.expectStopErrorCode {
+			errorCodeMatcher = gomock.Not(errorCodeMatcher)
+		}
+		testAPI.EXPECT().
+			UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq(tt.cmd.Name), errorCodeMatcher)
+	}
+	testEmitter := NewDonothingEmitter(ctrl)
 
 	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	expectedErr := fmt.Errorf("Launching command exit with code: %v", 127)
@@ -224,7 +243,7 @@ func TestTeardownEnv(t *testing.T) {
 	testAPI.EXPECT().
 		UpdateStepStop(gomock.Eq(testBuild.ID), gomock.Eq("doesnotexit"), gomock.Not(gomock.Eq(0)))
 
-	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter := NewDonothingEmitter(ctrl)
 	err := Run("", baseEnv, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	expectedErr := fmt.Errorf("Launching command exit with code: %v", 127)
 	if !reflect.DeepEqual(err, expectedErr) {
@@ -250,7 +269,7 @@ func TestTeardownfail(t *testing.T) {
 	testAPI.EXPECT().
 		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Any()).
 		AnyTimes()
-	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter := NewDonothingEmitter(ctrl)
 
 	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/sh", TestBuildTimeout, envFilepath, "")
 	expectedErr := ErrStatus{127}
@@ -305,7 +324,7 @@ func TestTimeout(t *testing.T) {
 		UpdateStepStop(gomock.Any(), gomock.Eq("completed"), gomock.Any()).
 		Times(0)
 
-	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter := NewDonothingEmitter(ctrl)
 	testEmitter.EXPECT().
 		StartCmd(NewFuncMatcher(func(i interface{}) bool {
 			return i.(screwdriver.CommandDef).Cmd == "sleep 3"
@@ -364,6 +383,11 @@ func TestEnv(t *testing.T) {
 		Write(gomock.Any()).
 		Do(emitterWritten.Write).
 		AnyTimes()
+	testEmitter.EXPECT().
+		StartCmd(gomock.Any()).
+		AnyTimes()
+	testEmitter.EXPECT().
+		Close()
 
 	wantFlattened := []string{}
 	for k, v := range want {
@@ -425,6 +449,12 @@ func TestEmitter(t *testing.T) {
 	testAPI.EXPECT().
 		UpdateStepStart(gomock.Eq(testBuild.ID), gomock.Eq("name2"))
 	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter.EXPECT().
+		Write(gomock.Any()).
+		AnyTimes()
+	testEmitter.EXPECT().
+		Close().
+		AnyTimes()
 
 	for _, test := range tests {
 		testBuild.Commands = append(testBuild.Commands, screwdriver.CommandDef{
@@ -466,7 +496,7 @@ func TestUserShell(t *testing.T) {
 	defer ctrl.Finish()
 
 	testAPI := mock_screwdriver.NewMockAPI(ctrl)
-	testEmitter := mock_screwdriver.NewMockEmitter(ctrl)
+	testEmitter := NewDonothingEmitter(ctrl)
 	err := Run("", nil, testEmitter, testBuild, testAPI, testBuild.ID, "/bin/bash", TestBuildTimeout, envFilepath, "")
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
